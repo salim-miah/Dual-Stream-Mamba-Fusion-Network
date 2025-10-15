@@ -1,2 +1,0 @@
-final_test_accuracy,final_test_auc,best_val_accuracy,total_epochs_trained,total_parameters,trainable_parameters
-0.735,0.8180624999999999,0.790625,20,15240574,15240574
