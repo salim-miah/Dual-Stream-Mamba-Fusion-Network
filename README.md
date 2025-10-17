@@ -48,7 +48,7 @@ The pipeline follows these high-level stages:
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
    pip install --upgrade pip
-   pip install torch torchvision librosa opencv-python tqdm scikit-learn ffmpeg-python
+   pip install torch torchvision librosa opencv-python tqdm scikit-learn ffmpeg-python mamba-ssm
    ```
    (Add mamba-ssm or other project-specific packages if required by V1d scripts.)
 
