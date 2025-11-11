@@ -47,14 +47,14 @@ print("✅ Libraries imported successfully.")
 class Config:
     def __init__(self):
         # --- Paths and Device ---
-        self.data_dir = "/content/AVLips_data/AVLips"
-        self.model_save_dir = "/content/models/"
+        self.data_dir = "/home/affshafee/T2430421/datasets/AVLips/AVLips"
+        self.model_save_dir = "/home/affshafee/T2430421/pipelines/novel_fusion/hierarchical_mamba_fusion"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         os.makedirs(self.model_save_dir, exist_ok=True)
 
         # --- Data Sampling ---
-        self.use_sampling = True
-        self.num_samples_per_class = 2000
+        self.use_sampling = False
+        self.num_samples_per_class = 500
 
         # --- Visual Stream (MobileNetV3-Small) ---
         self.vis_image_size = (128, 128)
@@ -591,7 +591,7 @@ def main():
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('/content/v1_hierarchical_mamba_loss_curve.png', dpi=150, bbox_inches='tight') # [HIERARCHICAL FUSION CHANGE]
+    plt.savefig('/home/affshafee/T2430421/pipelines/novel_fusion/hierarchical_mamba_fusion/v1_hierarchical_mamba_loss_curve.png', dpi=150, bbox_inches='tight')
     plt.show()
 
     print("\n✅ V1_HMF (Hierarchical Fusion) ablation study completed!") # [HIERARCHICAL FUSION CHANGE]
