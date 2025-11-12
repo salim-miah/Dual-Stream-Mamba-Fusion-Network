@@ -37,10 +37,18 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, roc_auc_score
 import warnings
+import torch.multiprocessing  # #[CRITICAL FIX]: Import multiprocessing
 
 # --- Environment Setup ---
 warnings.filterwarnings('ignore')
 torch.backends.cudnn.benchmark = True
+#[CRITICAL FIX]: Add sharing strategy as suggested by the error message.
+# This helps prevent "Too many open files" errors with multiprocessing.
+try:
+    torch.multiprocessing.set_sharing_strategy('file_system')
+except RuntimeError:
+    print("Note: Could not set multiprocessing sharing strategy (might be on Windows or already set).")
+    
 print("✅ Libraries imported successfully.")
 
 # --- 2. CONFIGURATION ---
@@ -112,9 +120,11 @@ class LabelSmoothingBCELoss(nn.Module):
 def process_visual_stream(video_path: str, config: Config):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
+        cap.release() # Ensure file handle is closed
         return None
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if total_frames < config.vis_num_frames:
+        cap.release()
         return None
     frame_indices = np.linspace(0, total_frames - 1, config.vis_num_frames, dtype=int)
     local_frames_list, context_frames_list, global_frames_list = [], [], []
@@ -137,7 +147,7 @@ def process_visual_stream(video_path: str, config: Config):
                 context_frames_list.append(cv2.cvtColor(resized_context, cv2.COLOR_BGR2RGB))
                 resized_global = cv2.resize(global_crop, config.vis_image_size)
                 global_frames_list.append(cv2.cvtColor(resized_global, cv2.COLOR_BGR2RGB))
-    cap.release()
+    cap.release() # Ensure file handle is closed
     if (len(local_frames_list) == config.vis_num_frames and
         len(context_frames_list) == config.vis_num_frames and
         len(global_frames_list) == config.vis_num_frames):
@@ -175,7 +185,8 @@ def process_audio_stream(video_path: str, config: Config):
         else:
             print(f"Warning: Audio processing yielded {len(mel_list)} chunks, expected {config.aud_num_chunks}.")
             return None
-    except Exception:
+    except Exception as e:
+        print(f"Error processing audio {video_path}: {e}")
         return None
 
 # This class (DualStreamDataset) remains unchanged
@@ -201,7 +212,8 @@ class DualStreamDataset(Dataset):
             audio_tensor = audio_mels.unsqueeze(1)
             visual_data_tuple = (local_frames_tchw, context_frames_tchw, global_frames_tchw)
             return (visual_data_tuple, audio_tensor), torch.tensor(label, dtype=torch.float32)
-        except Exception:
+        except Exception as e:
+            print(f"Error in getitem for {video_path}: {e}")
             return None
 
 # This class (RAMCachedDataset) remains unchanged
@@ -462,13 +474,19 @@ def main():
     print(f"Total Videos: {len(all_files)} | Train: {len(train_files)} | Val: {len(val_files)} | Test: {len(test_files)}")
 
     print("\n" + "="*80 + "\nSTEP 2: PRE-LOADING & CACHING DATA INTO RAM\n" + "="*80)
-    # (No changes in caching logic)
+    
     def collate_fn_skip_errors(batch):
         batch = list(filter(lambda x: x is not None, batch))
         return torch.utils.data.dataloader.default_collate(batch) if batch else (None, None)
+
     def cache_data(files, labels, desc):
         dataset = DualStreamDataset(files, labels, config)
-        loader = DataLoader(dataset, batch_size=config.batch_size, num_workers=os.cpu_count() // 2, collate_fn=collate_fn_skip_errors)
+        
+        #[CRITICAL FIX]: Set num_workers=0 for caching to prevent "Too many open files".
+        # This is a one-time step, so speed is less important than stability.
+        # The fast, multi-worker loaders are used for training (STEP 3).
+        loader = DataLoader(dataset, batch_size=config.batch_size, num_workers=0, collate_fn=collate_fn_skip_errors)
+        
         cached_data, cached_labels = [], []
         for data, batch_labels in tqdm(loader, desc=f"Caching {desc}"):
             if data is not None:
@@ -483,6 +501,7 @@ def main():
                     ))
                     cached_labels.append(batch_labels[i])
         return cached_data, torch.tensor(cached_labels)
+    
     cached_train_data, cached_train_labels = cache_data(train_files, train_labels, "Train Set")
     cached_val_data, cached_val_labels = cache_data(val_files, val_labels, "Validation Set")
     cached_test_data, cached_test_labels = cache_data(test_files, test_labels, "Test Set")
@@ -492,7 +511,7 @@ def main():
     print(f" - Test samples: {len(cached_test_data)}")
 
     print("\n" + "="*80 + "\nSTEP 3: CREATING FINAL DATALOADERS WITH ENHANCED AUGMENTATION\n" + "="*80)
-    # (No changes in transforms)
+    
     val_test_transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.ToTensor(),
@@ -511,15 +530,17 @@ def main():
     val_dataset = RAMCachedDataset(cached_val_data, cached_val_labels, transform=val_test_transform)
     test_dataset = RAMCachedDataset(cached_test_data, cached_test_labels, transform=val_test_transform)
     
+    # [CRITICAL FIX]: This is correct! These loaders use RAM data (no file I/O)
+    # and *should* use many workers for speed.
     num_workers = os.cpu_count() // 2
+    
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
-    print("✅ DataLoaders created successfully.")
+    print(f"✅ DataLoaders created successfully (using {num_workers} workers for training).")
 
     print("\n" + "="*80 + "\nSTEP 4: BUILDING [HYBRID-CNN] HIERARCHICAL FUSION MODEL\n" + "="*80)
     
-    # [HYBRID-CNN CHANGE]: Instantiating the new model
     model = HierarchicalFusionModel(config).to(config.device)
 
     total_params, trainable_params = count_parameters(model)
@@ -541,7 +562,6 @@ def main():
         optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-6
     )
 
-    # [HYBRID-CNN CHANGE]: New model path
     model_path = os.path.join(config.model_save_dir, 'v1_hmf_hybrid_cnn_best.pth')
     best_val_loss = float('inf')
     epochs_no_improve = 0
@@ -570,8 +590,13 @@ def main():
                 break
 
     print("\n" + "="*80 + "\nSTEP 6: FINAL EVALUATION ON TEST SET\n" + "="*80)
-    # (No changes in evaluation logic)
-    model.load_state_dict(torch.load(model_path))
+    
+    if os.path.exists(model_path):
+        model.load_state_dict(torch.load(model_path))
+        print(f"Loaded best model from {model_path} for final evaluation.")
+    else:
+        print("Warning: Best model not saved. Evaluating with last epoch model.")
+        
     model.eval()
     all_labels, all_preds = [], []
     with torch.no_grad():
@@ -584,11 +609,19 @@ def main():
             outputs = model(local_data, context_data, global_data, audio_data)
             all_preds.extend(torch.sigmoid(outputs).cpu().numpy())
             all_labels.extend(labels.numpy())
+            
     all_preds = np.array(all_preds).flatten()
     all_labels = np.array(all_labels).flatten()
+    
+    # Handle case where no predictions were made (e.g., test set was empty or caching failed)
+    if len(all_labels) == 0 or len(all_preds) == 0:
+        print("ERROR: No test samples were evaluated. Cannot generate report.")
+        return
+
     preds_binary = (all_preds > 0.5).astype(int)
     accuracy = (preds_binary == all_labels).mean()
-    auc_score = roc_auc_score(all_labels, all_preds)
+    auc_score = roc_auc_score(all_labels, all_preds) if len(np.unique(all_labels)) > 1 else 0.5
+    
     final_train_loss = history['train_loss'][-1] if history['train_loss'] else -1
     final_val_loss = history['val_loss'][-1] if history['val_loss'] else -1
     loss_gap = final_train_loss - final_val_loss if final_train_loss != -1 else -1
