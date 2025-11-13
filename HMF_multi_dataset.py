@@ -586,7 +586,8 @@ def main():
     val_dataset = RAMCachedDataset(cached_val_data, cached_val_labels, transform=val_test_transform)
     test_dataset = RAMCachedDataset(cached_test_data, cached_test_labels, transform=val_test_transform)
     
-    num_workers = os.cpu_count() // 2
+    # num_workers = os.cpu_count() // 2 
+    num_workers = 0
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
