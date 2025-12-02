@@ -1,0 +1,19 @@
+We previously developed a novel pipeline using mamba architectures that relied on lip-sync forgeries to detect deepfakes. Our method was multi-modal, as it detected inconsistencies across both the visual and audio stream of a video. Separate, yet identical state-space models were used to detect the temporal inconsistencies within each stream, while identical lightweight CNN modules were put in place before the mamba architectures to detect spatial inconcistensies; and the final mismatch between the lips and the corresponding audio was detected by a late stage fusion network, which was a multi layer perceptron. 
+
+The model performed excellently on its training dataset, achieving an accuracy of 98.21% and AUC of 99.45% with a parameter count of just 2.476M. For brevity, we will call this pipeline V1d (the name has been inspired from our previous ablation study).
+
+However, the problem with this pipeline was its subpar performance on the cross-dataset evaluation. For the cross-dataset evaluation, we chose KoDF. KoDF is a large-scale dataset of deepfake clips of Korean people. Since it is a dataset biased on ethnicitiy, this happened to be a good stress test for our V1d pipeline. 
+As stated before, the performance was subpar on the KoDF dataset. Our V1d pipeline achieved an accuracy of 75.18% and an AUC of 81.88% on the KoDF dataset. The precision and recall scores were 70.61% and 78.92% respectively. The F1-score was 74.53%.
+
+To improve upon this, we proposed some architectural changes to our V1d pipeline. 
+We now used four identical mamba blocks, each preceded by the same MobileNetV3-Small architecture. Among the four are the previous two mamba blocks, as they were before. Next, we used a CNN-Mamba pair to detect the spatial inconcistencies across the global domain of the video. This pair sought spatial inconsistencies beyond the 'lip-sync' mismatches. Lastly, another such CNN-Mamba pair was used to detect the temporal inconcistencies across the entire video. 
+
+All four Mamba outputs were then concatenated to a fusion Mamba that actively detects mismatches, and the result is then forwared to an MLP. We will call this new pipeline 'Hierarchical Mamba Fusion' or HMF for short. 
+
+Our HMF variant performed equally well on its training dataset (AV Lips): 97.49% accuracy and 99.84% on AUC. The parameter count, however, has more than tripled in size to 7.582M. This HMF pipeline did better than our V1d pipeline on KoDF: 80.50% accuracy, 87.96% AUC, 77.21% precision, 81.83% recall and an F1-Score of 79.45%. Our newer pipeline was an upgrade in all metrics except parameter count. 
+
+What remains to be seen are the following:
+* What if we remove the fusion Mamba module? Will that affect the cross-dataset performance?
+* How will the other SOTA multi modal models perform in this same context (trained on AV Lips and evaluated on KoDF)?
+
+The conclusion we derived from our initial failure is that solely focusing on lip-sync forgeries would lead to poorer generalization despite a very small parameter size. Our next goal are to address the aforementioned questions. 
